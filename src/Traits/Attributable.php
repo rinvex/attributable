@@ -215,6 +215,19 @@ trait Attributable
     }
 
     /**
+     * Clear the static attributes cache for this model.
+     *
+     * @return void
+     */
+    public function clearAttributableCache()
+    {
+        $morphClass = $this->getMorphClass();
+        if (static::$entityAttributes && static::$entityAttributes->has($morphClass)) {
+            static::$entityAttributes->forget($morphClass);
+        }
+    }
+
+    /**
      * Get the fillable attributes of a given array.
      *
      * @param array $attributes

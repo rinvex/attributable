@@ -107,6 +107,13 @@ class Attribute extends Model implements Sortable
     ];
 
     /**
+     * The entities that need to be attached to this attribute.
+     *
+     * @var mixed
+     */
+    protected $entitiesToSave = false;
+
+    /**
      * The default rules that the model will validate against.
      *
      * @var array
@@ -127,6 +134,31 @@ class Attribute extends Model implements Sortable
      * @var array
      */
     protected static $typeMap = [];
+
+    /**
+     * {@inheritdoc}
+     */
+    public static function boot()
+    {
+        parent::boot();
+        static::saved(function ($attribute) {
+            if ($attribute->entitiesToSave !== false) {
+                // Wrap this in a transaction so that we don't lose attached entities if `createMany` fails.
+                \DB::transaction(function () use ($attribute) {
+                    $entities = $attribute->entitiesToSave ?: [];
+                    $attribute->entities()->delete();
+                    ! $entities || $attribute->entities()->createMany(array_map(function ($entity) {
+                        return ['entity_type' => $entity];
+                    }, $entities));
+                    $attribute->entitiesToSave = false;
+                });
+            }
+            $attribute->clearAttributableCache();
+        });
+        static::deleted(function ($attribute) {
+            $attribute->clearAttributableCache();
+        });
+    }
 
     /**
      * Create a new Eloquent model instance.
@@ -201,7 +233,7 @@ class Attribute extends Model implements Sortable
      */
     public function getEntitiesAttribute(): array
     {
-        return $this->entities()->pluck('entity_type')->toArray();
+        return $this->entities()->pluck('entity_type')->toArray() ?: $this->entitiesToSave ?: [];
     }
 
     /**
@@ -214,12 +246,7 @@ class Attribute extends Model implements Sortable
      */
     public function setEntitiesAttribute($entities): void
     {
-        static::saved(function ($model) use ($entities) {
-            $this->entities()->delete();
-            ! $entities || $this->entities()->createMany(array_map(function ($entity) {
-                return ['entity_type' => $entity];
-            }, $entities));
-        });
+        $this->entitiesToSave = (array) $entities;
     }
 
     /**
@@ -256,5 +283,22 @@ class Attribute extends Model implements Sortable
     public function values(string $value): HasMany
     {
         return $this->hasMany($value, 'attribute_id', 'id');
+    }
+
+    /**
+     * Clears the attributable cache for all entities that are attached to this attribute.
+     *
+     * @return void
+     */
+    public function clearAttributableCache()
+    {
+        foreach ($this->entities as $entity) {
+            // Ensure that the class exists before creating an instance as the database
+            // could contain a model that no longer exists.
+            if (class_exists($entity)) {
+                $entityInstance = app()->make($entity);
+                $entityInstance->clearAttributableCache();
+            }
+        }
     }
 }
